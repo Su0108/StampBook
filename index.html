@@ -424,7 +424,7 @@
       <div class="stat"><div class="muted" style="font-size:11px;">Active</div><div class="v" id="admin-activecount">0</div></div>
       <div class="stat"><div class="muted" style="font-size:11px;">Suspended</div><div class="v" id="admin-suspendedcount">0</div></div>
       <div class="stat"><div class="muted" style="font-size:11px;">Total Invoices</div><div class="v" id="admin-invoicecount">0</div></div>
-      <div class="stat"><div class="muted" style="font-size:11px;">Cashfree Live</div><div class="v" id="admin-cashfreecount">0</div></div>
+      <div class="stat"><div class="muted" style="font-size:11px;">Payment Gateways Live</div><div class="v" id="admin-cashfreecount">0</div></div>
       <div class="stat"><div class="muted" style="font-size:11px;">Platform Revenue</div><div class="v" id="admin-revenue">₹0</div></div>
       <div class="stat"><div class="muted" style="font-size:11px;">Platform Outstanding</div><div class="v" id="admin-outstanding">₹0</div></div>
       <div class="stat"><div class="muted" style="font-size:11px;">New (7 days)</div><div class="v" id="admin-new7">0</div></div>
@@ -751,6 +751,7 @@
             <option value="cashfree">Cashfree</option>
             <option value="razorpay">Razorpay</option>
             <option value="payu">PayU</option>
+            <option value="instamojo">Instamojo</option>
           </select>
         </div>
 
@@ -778,6 +779,15 @@
           <div class="field"><label>Mode</label>
             <select id="pu-mode"><option value="test">Test</option><option value="live">Live / Production</option></select>
           </div>
+        </div>
+
+        <div id="pg-fields-instamojo" style="display:none;">
+          <div class="field"><label>Instamojo API Key</label><input id="im-apikey" placeholder="API Key from Instamojo dashboard"></div>
+          <div class="field"><label>Instamojo Auth Token</label><input id="im-authtoken" type="password" placeholder="Auth Token from Instamojo dashboard"></div>
+          <div class="field"><label>Mode</label>
+            <select id="im-mode"><option value="test">Test / Sandbox</option><option value="live">Live / Production</option></select>
+          </div>
+          <div class="muted" style="font-size:11px;margin:8px 0 4px;line-height:1.5;">Get your API Key and Auth Token from Instamojo → Settings → API &amp; Plugins.</div>
         </div>
 
         <button class="btn" style="margin-top:14px;" onclick="savePaymentGatewaySettings()">Save Payment Settings</button>
@@ -897,7 +907,7 @@
   <div class="screen" id="screen-privacy">
     <div class="topbar"><div class="backrow"><div class="iconbtn" onclick="goto('help')" id="privacy-back"></div><h1>Privacy Policy</h1></div></div>
     <div class="px legal-doc">
-      <div class="updated">Last updated: September 4, 2026</div>
+      <div class="updated">Last updated: September 7, 2026</div>
       <div class="card">
         <p>This Privacy Policy explains how <strong>Mandal Industries</strong>, operating the StampBook billing and invoicing application ("StampBook", "we", "us", "our"), collects, uses, and protects information when you use our app and services.</p>
 
@@ -928,7 +938,7 @@
         <p>We work with the following third parties, who may process limited data on our behalf:</p>
         <ul>
           <li><strong>Supabase</strong> — database, authentication, and storage infrastructure.</li>
-          <li><strong>Payment partners</strong> (Cashfree, Razorpay, PayU) — payment processing for subscriptions and purchases, depending on which gateway a business has connected.</li>
+          <li><strong>Payment partners</strong> (Cashfree, Razorpay, PayU, Instamojo) — payment processing for subscriptions and purchases, depending on which gateway a business has connected.</li>
           <li><strong>Google AdSense</strong> — may display advertisements and use cookies or device identifiers to do so.</li>
         </ul>
         <p>These providers have their own privacy policies governing the use of your information.</p>
@@ -2362,15 +2372,41 @@ async function deleteInvoice(id){
     msg = `Invoice ${id} has ${linkedPayments.length} payment record(s). Deleting this invoice will also delete all associated payment records. This can't be undone. Continue?`;
   }
   if(!confirm(msg)) return;
-  
-  await sb.from('invoice_items').delete().eq('invoice_id', id);
-  await sb.from('payments').delete().eq('invoice_id', id);
-  await sb.from('invoices').delete().eq('id', id);
-  
+
+  // Each delete's error must be checked — silently trusting these to have
+  // succeeded (the old behavior) meant that if any one of them failed
+  // (expired session, RLS mismatch, network drop, etc.) the app would still
+  // wipe its local copy and tell the user "Invoice deleted", while the row
+  // stayed alive on the server. The very next refresh re-fetches real data
+  // from Supabase and the "deleted" invoice (and its payment) reappear,
+  // which is exactly the bug being fixed here. Stop and surface the error
+  // instead of proceeding past a failed step.
+  // Gateway order tables (razorpay_orders / payu_orders / cashfree_orders)
+  // FK-reference invoices.id too. Skipping these was the actual root cause
+  // of invoices "coming back": if an invoice was ever paid through one of
+  // these gateways, the final invoices delete below would be rejected by
+  // Postgres with a foreign-key violation — an error the old code never
+  // checked for, so it looked successful locally while the row survived.
+  const { error:rpErr } = await sb.from('razorpay_orders').delete().eq('invoice_id', id);
+  if(rpErr){ alert('Could not delete invoice: '+rpErr.message); return; }
+  const { error:puErr } = await sb.from('payu_orders').delete().eq('invoice_id', id);
+  if(puErr){ alert('Could not delete invoice: '+puErr.message); return; }
+  const { error:cfErr } = await sb.from('cashfree_orders').delete().eq('invoice_id', id);
+  if(cfErr){ alert('Could not delete invoice: '+cfErr.message); return; }
+  const { error:imErr } = await sb.from('instamojo_orders').delete().eq('invoice_id', id);
+  if(imErr){ alert('Could not delete invoice: '+imErr.message); return; }
+  const { error:itemsErr } = await sb.from('invoice_items').delete().eq('invoice_id', id);
+  if(itemsErr){ alert('Could not delete invoice: '+itemsErr.message); return; }
+  const { error:payErr } = await sb.from('payments').delete().eq('invoice_id', id);
+  if(payErr){ alert('Could not delete invoice: '+payErr.message); return; }
+  const { error:invErr } = await sb.from('invoices').delete().eq('id', id);
+  if(invErr){ alert('Could not delete invoice: '+invErr.message); return; }
+
   invoices = invoices.filter(i=>i.id!==id);
   payments = payments.filter(p=>p.invoiceId!==id);
   activity = activity.filter(a=> !(a.text||'').includes(id));
-  
+  saveCachedData();
+
   logActivity('Invoice '+id+' deleted', (c||{}).name||'', 'other', 'cancelled');
   showToast('Invoice deleted');
   if(currentInvoiceId===id) currentInvoiceId = null;
@@ -2383,6 +2419,7 @@ const CF_FUNCTIONS_BASE = 'https://sjrkoiypdhcrwzetijen.supabase.co/functions/v1
 function payWithGateway(invId, btn){
   if(publicActiveGateway === 'razorpay') return payViaRazorpay(invId, btn);
   if(publicActiveGateway === 'payu') return payViaPayU(invId, btn);
+  if(publicActiveGateway === 'instamojo') return payViaInstamojo(invId, btn);
   return payViaCashfree(invId, btn);
 }
 
@@ -2557,6 +2594,31 @@ async function payViaPayU(invId, btn){
   }
 }
 
+async function payViaInstamojo(invId, btn){
+  setBtnLoading(btn, true);
+  try{
+    const createRes = await fetch(CF_FUNCTIONS_BASE + '/instamojo-create-order', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ invoice_id: invId, return_url: invoiceShareLink(invId) })
+    });
+    const order = await createRes.json();
+    if(!createRes.ok || order.error){
+      showToast(order.error || 'Could not start payment');
+      setBtnLoading(btn, false);
+      return;
+    }
+    // Instamojo is a hosted-page redirect flow (not a modal) — send the whole
+    // page to the returned longurl. Instamojo redirects back to
+    // instamojo-callback, which sends the browser back here with
+    // ?instamojo=success / ?instamojo=failed for us to pick up on load.
+    window.location.href = order.longurl;
+  }catch(e){
+    console.error(e);
+    showToast('Payment failed, please try again');
+    setBtnLoading(btn, false);
+  }
+}
+
 // ---------------- CREATE INVOICE ----------------
 function renderCreateScreen(){
   document.getElementById('ci-date').value = todayISO();
@@ -2706,13 +2768,33 @@ async function deleteClient(clientId){
   if(!confirm(msg)) return;
 
   const invoiceIds = linkedInvoices.map(i=>i.id);
-  if(invoiceIds.length) await sb.from('invoice_items').delete().in('invoice_id', invoiceIds);
-  await sb.from('payments').delete().eq('client_id', clientId);
-  if(invoiceIds.length) await sb.from('invoices').delete().in('id', invoiceIds);
-  await sb.from('clients').delete().eq('id', clientId);
+  // Same reasoning as deleteInvoice(): check every step's error and stop on
+  // the first failure instead of wiping local state as if the server-side
+  // cascade had actually completed.
+  if(invoiceIds.length){
+    const { error:rpErr } = await sb.from('razorpay_orders').delete().in('invoice_id', invoiceIds);
+    if(rpErr){ alert('Could not delete client: '+rpErr.message); return; }
+    const { error:puErr } = await sb.from('payu_orders').delete().in('invoice_id', invoiceIds);
+    if(puErr){ alert('Could not delete client: '+puErr.message); return; }
+    const { error:cfErr } = await sb.from('cashfree_orders').delete().in('invoice_id', invoiceIds);
+    if(cfErr){ alert('Could not delete client: '+cfErr.message); return; }
+    const { error:imErr } = await sb.from('instamojo_orders').delete().in('invoice_id', invoiceIds);
+    if(imErr){ alert('Could not delete client: '+imErr.message); return; }
+    const { error:itemsErr } = await sb.from('invoice_items').delete().in('invoice_id', invoiceIds);
+    if(itemsErr){ alert('Could not delete client: '+itemsErr.message); return; }
+  }
+  const { error:payErr } = await sb.from('payments').delete().eq('client_id', clientId);
+  if(payErr){ alert('Could not delete client: '+payErr.message); return; }
+  if(invoiceIds.length){
+    const { error:invErr } = await sb.from('invoices').delete().in('id', invoiceIds);
+    if(invErr){ alert('Could not delete client: '+invErr.message); return; }
+  }
+  const { error:clientErr } = await sb.from('clients').delete().eq('id', clientId);
+  if(clientErr){ alert('Could not delete client: '+clientErr.message); return; }
 
   invoices = invoices.filter(i=>i.clientId!==clientId);
   payments = payments.filter(p=>p.clientId!==clientId);
+  saveCachedData();
   activity = activity.filter(a=>{
     if(invoiceIds.some(id=> (a.text||'').includes(id))) return false;
     if((a.sub||'').includes(c.name)) return false;
@@ -3048,6 +3130,7 @@ function renderGatewayFields(){
   document.getElementById('pg-fields-cashfree').style.display = g==='cashfree' ? '' : 'none';
   document.getElementById('pg-fields-razorpay').style.display = g==='razorpay' ? '' : 'none';
   document.getElementById('pg-fields-payu').style.display = g==='payu' ? '' : 'none';
+  document.getElementById('pg-fields-instamojo').style.display = g==='instamojo' ? '' : 'none';
 }
 async function renderPaymentGatewaySettings(){
   document.getElementById('cf-webhook-url').textContent =
@@ -3072,12 +3155,16 @@ async function renderPaymentGatewaySettings(){
   document.getElementById('pu-salt').value = pg?.payu_salt || '';
   document.getElementById('pu-mode').value = pg?.payu_is_live ? 'live' : 'test';
 
+  document.getElementById('im-apikey').value = pg?.instamojo_api_key || '';
+  document.getElementById('im-authtoken').value = pg?.instamojo_auth_token || '';
+  document.getElementById('im-mode').value = pg?.instamojo_is_live ? 'live' : 'test';
+
   const activeGateway = pg?.active_gateway || '';
   document.getElementById('pg-gateway').value = activeGateway;
   renderGatewayFields();
 
   const pill = document.getElementById('cf-status-pill');
-  const names = { cashfree:'Cashfree', razorpay:'Razorpay', payu:'PayU' };
+  const names = { cashfree:'Cashfree', razorpay:'Razorpay', payu:'PayU', instamojo:'Instamojo' };
   if(activeGateway){
     pill.textContent = names[activeGateway] + ' live on invoices';
     pill.className = 'pill Paid';
@@ -3102,6 +3189,10 @@ async function savePaymentGatewaySettings(){
   const payu_salt = document.getElementById('pu-salt').value.trim();
   const payu_is_live = document.getElementById('pu-mode').value === 'live';
 
+  const instamojo_api_key = document.getElementById('im-apikey').value.trim();
+  const instamojo_auth_token = document.getElementById('im-authtoken').value.trim();
+  const instamojo_is_live = document.getElementById('im-mode').value === 'live';
+
   if(activeGateway === 'cashfree' && (!app_id || !secret_key)){
     alert('Add your Cashfree App ID and Secret Key before making it the active gateway.');
     return;
@@ -3112,6 +3203,10 @@ async function savePaymentGatewaySettings(){
   }
   if(activeGateway === 'payu' && (!payu_merchant_key || !payu_salt)){
     alert('Add your PayU Merchant Key and Salt before making it the active gateway.');
+    return;
+  }
+  if(activeGateway === 'instamojo' && (!instamojo_api_key || !instamojo_auth_token)){
+    alert('Add your Instamojo API Key and Auth Token before making it the active gateway.');
     return;
   }
 
@@ -3129,6 +3224,7 @@ async function savePaymentGatewaySettings(){
     user_id: currentAuth.id, active_gateway: activeGateway,
     razorpay_key_id, razorpay_key_secret, razorpay_is_live,
     payu_merchant_key, payu_salt, payu_is_live,
+    instamojo_api_key, instamojo_auth_token, instamojo_is_live,
     updated_at: new Date().toISOString()
   });
   if(pgError){ alert('Could not save payment settings: '+pgError.message); return; }
@@ -3166,7 +3262,7 @@ const HELP_FAQS = [
   {q:'How do I create a new invoice?', a:'Tap the red + button on the Home screen (or go to Invoices and tap New) — add your client, line items and due date, then save.'},
   {q:'How do I record a payment against an invoice?', a:'Open the invoice, tap "Record Payment", then enter the amount received and the date. The invoice status updates automatically to Partial or Paid.'},
   {q:'How do I share an invoice with a client?', a:'Open the invoice and tap Share to send it via WhatsApp, email, or copy the link directly. Clients can view a shared invoice without needing an account.'},
-  {q:'How do I set up online payments?', a:'Go to Profile \u2192 Business Settings \u2192 Online Payments, choose Cashfree, Razorpay, or PayU from the Payment Gateway dropdown, add that gateway\u2019s keys, then save. Only one gateway can be active at a time.'},
+  {q:'How do I set up online payments?', a:'Go to Profile \u2192 Business Settings \u2192 Online Payments, choose Cashfree, Razorpay, PayU, or Instamojo from the Payment Gateway dropdown, add that gateway\u2019s keys, then save. Only one gateway can be active at a time.'},
   {q:'How do I add or edit a client?', a:'Go to Clients from the bottom navigation. Tap + to add a new client, or tap an existing client to view and edit their details.'},
   {q:'Can I change my login email or phone number?', a:'For security, the login email/phone can\u2019t be changed directly in the app. Contact support and we\u2019ll help you update it.'},
   {q:'How do I switch to Dark Mode?', a:'Go to Profile and tap Dark Mode to toggle it on or off.'}
@@ -3296,6 +3392,18 @@ async function finishBoot(){
     const payuStatus = new URLSearchParams(location.search).get('payu');
     if(payuStatus){
       if(payuStatus === 'success'){ showToast('Payment received — thank you!'); }
+      else { showToast('Payment could not be completed'); }
+      const cleanUrl = location.pathname + location.hash;
+      history.replaceState(history.state, '', cleanUrl);
+    }
+
+    // Instamojo is also a hosted-page redirect flow: after paying, Instamojo
+    // sends the browser back here with ?instamojo=success / ?instamojo=failed
+    // (added by the instamojo-callback edge function). Same one-time toast
+    // + URL cleanup as the PayU flow above.
+    const instamojoStatus = new URLSearchParams(location.search).get('instamojo');
+    if(instamojoStatus){
+      if(instamojoStatus === 'success'){ showToast('Payment received — thank you!'); }
       else { showToast('Payment could not be completed'); }
       const cleanUrl = location.pathname + location.hash;
       history.replaceState(history.state, '', cleanUrl);
