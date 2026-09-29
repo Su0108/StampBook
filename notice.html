@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>StampBook — Notices &amp; Updates</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --red:#C0392B; --ink:#221D1B; --muted:#8A7E79; --line:#EFE9E4; --bg:#FBF8F5; --card:#FFFFFF;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; font-family:'Manrope',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); padding-bottom:40px;}
+  h1{margin:0; font-size:20px; font-weight:800; display:flex; align-items:center; gap:10px;}
+  h1 i{color:var(--red);}
+  .topbar{padding:26px 22px 16px;}
+  .px{padding:0 22px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin-bottom:12px;}
+  .date{font-size:11.5px; font-weight:700; color:var(--red); margin-bottom:8px; letter-spacing:.2px;}
+  .notice-body{font-size:13.5px; line-height:1.65; color:var(--ink);}
+  .notice-body img{max-width:100%; border-radius:10px;}
+  .empty{text-align:center; padding:70px 22px; color:var(--muted);}
+  .empty i{font-size:36px; margin-bottom:12px; display:block;}
+</style>
+</head>
+<body>
+
+<div class="topbar"><h1><i class="fa-solid fa-bell"></i>Notices &amp; Updates</h1></div>
+
+<div class="px" id="notice-list"></div>
+<div class="empty" id="empty-state" style="display:none;"><i class="fa-regular fa-bell"></i>No notices yet</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+/* ---------------------------------------------------------------------
+   SETUP (run once in Supabase SQL Editor, same StampBook project):
+
+   create table app_notices (
+     id uuid primary key default gen_random_uuid(),
+     body_html text not null,
+     created_at timestamptz not null default now()
+   );
+
+   alter table app_notices enable row level security;
+
+   create policy "public can read notices" on app_notices
+     for select using (true);
+
+   create policy "admins can insert notices" on app_notices
+     for insert to authenticated
+     with check (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+
+   create policy "admins can update notices" on app_notices
+     for update to authenticated
+     using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+
+   create policy "admins can delete notices" on app_notices
+     for delete to authenticated
+     using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+
+   No login or admin controls on this page — notices are published,
+   edited, and deleted from StampBook's index.html, Admin Panel → Notices tab.
+--------------------------------------------------------------------- */
+
+const SUPABASE_URL = 'https://sjrkoiypdhcrwzetijen.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_xyVWy9kXzG4wScJMp40kbg_ZX1fgeMb';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+loadNotices();
+
+async function loadNotices(){
+  const { data, error } = await sb.from('app_notices').select('*').order('created_at', { ascending:false });
+  const list = document.getElementById('notice-list');
+  const empty = document.getElementById('empty-state');
+  if(error || !data || !data.length){
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    empty.innerHTML = error
+      ? '<i class="fa-solid fa-triangle-exclamation"></i>Could not load notices'
+      : '<i class="fa-regular fa-bell"></i>No notices yet';
+    return;
+  }
+  empty.style.display = 'none';
+  // Build the cards first (date label + an empty host div per notice),
+  // then load each notice's raw HTML into its own <iframe srcdoc>.
+  // An iframe gives each notice a completely separate document: any
+  // <style>/"body {...}" rules the admin pastes can't leak out and
+  // hijack this page's layout, AND unlike a Shadow DOM, a pasted
+  // <script> (e.g. a countdown timer) runs normally with its own
+  // working document.getElementById \u2014 Shadow DOM would run the
+  // script but document.getElementById can't see into a shadow tree,
+  // so countdowns silently never updated.
+  list.innerHTML = data.map((n,i)=>{
+    const d = new Date(n.created_at);
+    const dstr = String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0')+'/'+d.getFullYear();
+    return `<div class="card">
+      <div class="date">Date : ${dstr}</div>
+      <div class="notice-body" data-notice-host="${i}"></div>
+    </div>`;
+  }).join('');
+  data.forEach((n,i)=>{
+    const host = list.querySelector(`[data-notice-host="${i}"]`);
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox','allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox');
+    iframe.style.cssText = 'width:100%;border:0;display:block;overflow:hidden;';
+    iframe.srcdoc = n.body_html;
+    iframe.addEventListener('load', ()=>{
+      try{
+        const doc = iframe.contentDocument;
+        const resize = ()=>{ iframe.style.height = doc.documentElement.scrollHeight + 'px'; };
+        resize();
+        // Content like a countdown can change size (e.g. text reflow);
+        // keep the iframe's height in sync as it does.
+        new ResizeObserver(resize).observe(doc.documentElement);
+      }catch(e){ /* cross-origin edge case, ignore */ }
+    });
+    host.replaceWith(iframe);
+  });
+}
+</script>
+</body>
+</html>
