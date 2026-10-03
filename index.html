@@ -23,7 +23,7 @@
 <meta name="twitter:description" content="Create, send, and get paid for invoices — fast and simple billing for your business." />
 <meta name="twitter:image" content="https://stampbook.shop/stampbook-logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
 <link rel="icon" id="app-favicon" href="" />
 <link rel="stylesheet" href="style.css?v=2">
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
@@ -203,11 +203,11 @@
         <div id="admin-rev-inspector" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <div>
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b;">Selected Month</div>
-            <div id="admin-rev-ins-month" style="font-size:14px;font-weight:700;color:#f8fafc;font-family:'JetBrains Mono',monospace;">Hover chart</div>
+            <div id="admin-rev-ins-month" style="font-size:14px;font-weight:700;color:#f8fafc;font-family:inherit;">Hover chart</div>
           </div>
           <div style="text-align:right;">
             <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:#64748b;">Revenue</div>
-            <div id="admin-rev-ins-val" style="font-size:14px;font-weight:700;color:#06b6d4;font-family:'JetBrains Mono',monospace;">--</div>
+            <div id="admin-rev-ins-val" style="font-size:14px;font-weight:700;color:#06b6d4;font-family:inherit;">--</div>
           </div>
         </div>
         <div style="position:relative;height:140px;width:100%;">
@@ -446,8 +446,9 @@
           </div>
         </div>
         <div id="create-client-quickadd" style="display:none;margin-top:10px;">
-          <div class="field"><input id="qc-name" placeholder="Client name"></div>
-          <div class="field"><input id="qc-phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" placeholder="10-digit mobile number" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10)"></div>
+          <div class="field"><input id="qc-name" placeholder="Client name *"></div>
+          <div class="field"><input id="qc-phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" placeholder="10-digit mobile number *" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10)"></div>
+          <div class="field"><input id="qc-email" type="email" inputmode="email" placeholder="Email address *"></div>
           <div class="row">
             <button class="btn line" onclick="hideQuickAddClient()">Cancel</button>
             <button class="btn" onclick="quickAddClient()">Save</button>
@@ -483,7 +484,7 @@
 
       <div class="row" style="margin-top:16px;">
         <button class="btn line strong" onclick="saveInvoice('draft', this)">Save as Draft</button>
-        <button class="btn" onclick="saveInvoice('sent', this)">Save &amp; Send</button>
+        <button class="btn" onclick="saveInvoice('sent', this)">Save &amp; Mark as Sent</button>
       </div>
     </div>
   </div>
@@ -492,9 +493,9 @@
   <div class="screen" id="screen-addclient">
     <div class="topbar"><div class="backrow"><div class="iconbtn" id="addclient-back"></div><h1 id="addclient-title">Add Client</h1></div></div>
     <div class="px">
-      <div class="field"><label>Client Name</label><input id="ac-name"></div>
-      <div class="field"><label>Phone Number</label><input id="ac-phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" placeholder="10-digit mobile number" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10)"></div>
-      <div class="field"><label>Email Address</label><input id="ac-email"></div>
+      <div class="field"><label>Client Name *</label><input id="ac-name" placeholder="Client name"></div>
+      <div class="field"><label>Phone Number *</label><input id="ac-phone" type="tel" inputmode="numeric" pattern="[0-9]{10}" maxlength="10" placeholder="10-digit mobile number" oninput="this.value=this.value.replace(/[^0-9]/g,'').slice(0,10)"></div>
+      <div class="field"><label>Email Address *</label><input id="ac-email" type="email" inputmode="email" placeholder="name@example.com"></div>
       <div class="field"><label>Address</label><input id="ac-address"></div>
       <div class="field"><label>GSTIN (Optional)</label><input id="ac-gstin"></div>
       <div class="field"><label>Notes (Optional)</label><textarea id="ac-notes" rows="3"></textarea></div>
@@ -684,7 +685,7 @@
         <div class="field"><label>Account Number</label><input id="biz-account"></div>
         <div class="field"><label>IFSC Code</label><input id="biz-ifsc"></div>
       </div>
-      <div class="field"><label>UPI ID</label><input id="biz-upi"></div>
+      <div class="field"><label>Merchant UPI ID</label><input id="biz-upi" placeholder="yourshop@bankname" autocapitalize="off" autocomplete="off" spellcheck="false"><div class="muted" style="font-size:11px;margin-top:4px;">Enter your business (merchant) UPI ID only.</div></div>
       <div class="row">
         <div class="field"><label>Invoice Prefix</label><input id="biz-prefix"></div>
         <div class="field"><label>Next Invoice No.</label><input id="biz-nextno" type="number"></div>
@@ -697,6 +698,7 @@
         <select id="biz-template">
           <option>Classic</option><option>Minimal</option><option>Bold</option><option>Modern</option>
           <option>Luxe</option><option>Editorial</option><option>Aster</option>
+          <option>Ledger</option><option>Stamp</option><option>Spine</option>
         </select>
       </div>
 
@@ -751,7 +753,7 @@
           <select id="pg-gateway" onchange="renderGatewayFields()">
             <option value="">None (offline payments only)</option>
             <option value="razorpay">Razorpay</option>
-            <option value="upi">UPI ID</option>
+            <option value="upi">Merchant UPI ID</option>
           </select>
         </div>
 

@@ -113,13 +113,16 @@ html,body{
 }
 body{
   margin:0;
-  font-family:'Manrope',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  font-family:'Bricolage Grotesque',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   background:var(--bg);
   color:var(--ink);
   overflow:hidden
 }
 h1,h2,h3{
-  font-family:'Manrope',sans-serif
+  font-family:'Bricolage Grotesque',sans-serif
+}
+button,input,select,textarea{
+  font-family:inherit
 }
 #app{
   position:fixed;
@@ -2945,3 +2948,8 @@ body.dark-mode .sendwait-track{
   }
 
 }
+
+.item-head-hint{font-size:11px;color:var(--muted);line-height:1.4;margin-bottom:8px}
+.item-row.item-head{margin-bottom:4px;font-size:11px;font-weight:700;color:var(--muted)}
+.item-row.item-head .qty,.item-row.item-head .price{text-align:center}
+.item-row.item-head .rm-sp{width:23px;flex:none}
