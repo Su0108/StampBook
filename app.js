@@ -2158,7 +2158,16 @@ async function renderUpiQrOnPage(inv){
 }
 // ---------------- PDF / SHARE ----------------
 const pdfRupee = (n) => 'Rs. ' + _inr.format(Math.round(Number(n||0)));
-const CANONICAL_APP_URL = 'https://stampbook.shop/';
+registerJobHandler('payment-notify', async (payload) => {
+  const { data: { session } } = await sb.auth.getSession();
+  const r = await fetch('https://notify-payment-received-production.up.railway.app', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + (session?.access_token || '') },
+    body: JSON.stringify(payload)
+  });
+  if(!r.ok) throw new Error('notify failed ' + r.status);
+});
+const CANONICAL_APP_URL = 'https://stampbook.shop/app.html';
 function appBaseUrl(){
   return CANONICAL_APP_URL;
 }
@@ -3290,21 +3299,7 @@ async function savePayment(btn){
       }
     }
     logActivity('Payment received', rupee(amount)+' from '+(clientById(clientId)||{}).name, 'paid', 'payment');
-    (async () => {
-        try {
-          const { data: { session } } = await sb.auth.getSession();
-          await fetch('https://notify-payment-received-production.up.railway.app', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + (session?.access_token || '')
-              },
-              body: JSON.stringify({ payment_id: data.id })
-            });
-        } catch (err) {
-          console.error('payment-received notify failed:', err);
-        }
-      })();
+    enqueueJob('payment-notify', { payment_id: data.id });
     showToast('Payment recorded');
     goto('payments');
   } finally {
@@ -4063,6 +4058,8 @@ async function doSendLoginOtp(){
     showAuthError('login-error','Please enter a valid 10-digit WhatsApp number or email address.');
     return;
   }
+  const rl = rateLimit('otp-login', 5, 10*60*1000);
+  if(!rl.ok){ showAuthError('login-error','Too many attempts. Please try again in '+Math.ceil(rl.retryAfterSec/60)+' min.'); return; }
   setBtnBusy('login-btn',true,'Sending OTP…');
   try{
     if(isPhone){
@@ -4322,6 +4319,8 @@ function renderOtpScreen(){
 }
 async function doResendOtp(){
   if(!otpContext || otpResendRemaining>0) return;
+  const rl = rateLimit('otp-resend', 5, 10*60*1000);
+  if(!rl.ok){ showAuthError('otp-error','Too many resend attempts. Try again in '+Math.ceil(rl.retryAfterSec/60)+' min.'); return; }
   setBtnBusy('otp-resend-btn',true,'Resending…');
   let error=null;
   if(otpContext.purpose==='register-phone'){
