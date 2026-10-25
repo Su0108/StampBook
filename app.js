@@ -1340,7 +1340,7 @@ function renderAdminGatewayUsage(list){
   renderAdminMainTabs();
   if(!el) return;
   if(!list){ el.innerHTML = `<div class="empty">Could not load gateway usage</div>`; return; }
-  const names = { razorpay:'Razorpay', upi:'UPI' };
+  const names = { razorpay:'Razorpay', youpi:'YouPI', upi:'UPI' };
   const connected = list.filter(u=>u.active_gateway);
   const notConnected = list.filter(u=>!u.active_gateway);
   el.innerHTML = `
@@ -1705,7 +1705,7 @@ async function loadAdminGatewayFailures(){
 function renderAdminGatewayFailures(){
   const el = $('admin-gateway-failures');
   if(!el) return;
-  const names = { razorpay:'Razorpay' };
+  const names = { razorpay:'Razorpay', youpi:'YouPI' };
   const rows = adminFailuresCache.filter(g=>g.total_orders>0);
   if(!rows.length){ el.innerHTML = `<div class="empty">No gateway orders recorded yet.</div>`; return; }
   el.innerHTML = rows.map(g=>{
@@ -2775,7 +2775,53 @@ async function deleteInvoice(id){
 const CF_FUNCTIONS_BASE = 'https://sjrkoiypdhcrwzetijen.supabase.co/functions/v1';
 function payWithGateway(invId, btn){
   if(publicActiveGateway === 'upi') return payViaUpi(invId, btn);
+  if(publicActiveGateway === 'youpi') return payViaYoupi(invId, btn);
   return payViaRazorpay(invId, btn);
+}
+let youpiPollTimer = null;
+async function payViaYoupi(invId, btn){
+  setBtnLoading(btn, true);
+  // Open the tab synchronously so mobile browsers do not block it as a popup.
+  const win = window.open('', '_blank');
+  try{
+    const res = await fetch(CF_FUNCTIONS_BASE + '/youpi-create-order', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ invoice_id: invId, return_url: location.href })
+      });
+    const order = await res.json();
+    if(!res.ok || order.error || !order.checkout_url){
+      if(win) win.close();
+      showToast(order.error || 'Could not start payment');
+      setBtnLoading(btn, false);
+      return;
+    }
+    if(win) win.location.href = order.checkout_url; else window.location.href = order.checkout_url;
+    setBtnLoading(btn, false);
+    showToast('Complete the payment in the new tab. This page updates automatically.');
+    startYoupiPolling(invId);
+  }catch(e){
+    console.error(e);
+    if(win) win.close();
+    showToast('Payment failed, please try again');
+    setBtnLoading(btn, false);
+  }
+}
+function startYoupiPolling(invId){
+  clearInterval(youpiPollTimer);
+  const stopAt = Date.now() + 15*60*1000;
+  youpiPollTimer = setInterval(async ()=>{
+    if(Date.now() > stopAt){ clearInterval(youpiPollTimer); return; }
+    if(document.visibilityState !== 'visible') return;
+    // Paid status only changes when the server verifies YouPI's signed webhook.
+    if(await loadPublicInvoice(invId)){
+      const inv = computeInvoice(getDisplayInvoice(invId));
+      if(inv && Number(inv.due) <= 0){
+        clearInterval(youpiPollTimer);
+        renderInvoiceDetail();
+        showToast('Payment received — thank you!');
+      }
+    }
+  }, 5000);
 }
 let upiAwaitingReturn = null;
 function payViaUpi(invId, btn){
@@ -3740,6 +3786,7 @@ function saveBusiness(){
 function renderGatewayFields(){
   const g = $('pg-gateway').value;
   $('pg-fields-razorpay').style.display = g==='razorpay' ? '' : 'none';
+  $('pg-fields-youpi').style.display = g==='youpi' ? '' : 'none';
   $('pg-fields-upi').style.display = g==='upi' ? '' : 'none';
   const note = $('pg-upi-note');
   if(g==='upi' && note){
@@ -3756,11 +3803,14 @@ async function renderPaymentGatewaySettings(){
   $('rp-keyid').value = pg?.razorpay_key_id || '';
   $('rp-secret').value = pg?.razorpay_key_secret || '';
   $('rp-mode').value = pg?.razorpay_is_live ? 'live' : 'test';
+  $('yp-url').value = pg?.youpi_base_url || '';
+  $('yp-merchant').value = pg?.youpi_merchant_id || '';
+  $('yp-secret').value = pg?.youpi_webhook_secret || '';
   const activeGateway = pg?.active_gateway || '';
   $('pg-gateway').value = activeGateway;
   renderGatewayFields();
   const pill = $('cf-status-pill');
-  const names = { razorpay:'Razorpay', upi:'UPI ID' };
+  const names = { razorpay:'Razorpay', youpi:'YouPI', upi:'UPI ID' };
   if(activeGateway){
     pill.textContent = names[activeGateway] + ' live on invoices';
     pill.className = 'pill Paid';
@@ -3779,6 +3829,19 @@ async function savePaymentGatewaySettings(){
     alert('Add your Razorpay Key ID and Key Secret before making it the active gateway.');
     return;
   }
+  const youpi_base_url = $('yp-url').value.trim().replace(/\/+$/,'');
+  const youpi_merchant_id = $('yp-merchant').value.trim();
+  const youpi_webhook_secret = $('yp-secret').value.trim();
+  if(activeGateway === 'youpi'){
+    if(!/^https:\/\/[^\s\/]+/i.test(youpi_base_url)){
+      alert('Enter your YouPI server URL starting with https://');
+      return;
+    }
+    if(!youpi_merchant_id || youpi_webhook_secret.length < 16){
+      alert('Add your YouPI Merchant ID and a Webhook Secret of at least 16 characters.');
+      return;
+    }
+  }
   if(activeGateway === 'upi' && !$('biz-upi').value.trim()){
     alert('Add a merchant UPI ID in Business Settings above before making it the active gateway.');
     return;
@@ -3790,6 +3853,7 @@ async function savePaymentGatewaySettings(){
   const { error: pgError } = await sb.from('payment_gateway_settings').upsert({
       user_id: currentAuth.id, active_gateway: activeGateway,
       razorpay_key_id, razorpay_key_secret, razorpay_is_live,
+      youpi_base_url, youpi_merchant_id, youpi_webhook_secret,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id' });
   if(pgError){ alert('Could not save payment settings: '+pgError.message); return; }
