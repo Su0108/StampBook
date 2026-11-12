@@ -2,4 +2,7 @@ User-agent: *
 Allow: /
 Disallow: /app.html
 
+User-agent: Mediapartners-Google
+Allow: /
+
 Sitemap: https://stampbook.shop/sitemap.xml
